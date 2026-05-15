@@ -1,4 +1,5 @@
 from time import sleep
+import datetime
 import difflib
 import os
 import optparse
@@ -13,6 +14,39 @@ from timemachine import bluetoothctl, config
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 OS_VERSION = None
+
+CMD_PATH = os.path.join(os.getenv("HOME"), ".timemachine_cmd.json")
+STATE_PATH = os.path.join(os.getenv("HOME"), ".timemachine_state.json")
+
+_archive = None
+
+
+def _get_archive():
+    global _archive
+    if _archive is not None:
+        return _archive
+    from timemachine import Archivary, config as tm_config
+    tm_config.load_options()
+    collection_list = tm_config.optd.get("COLLECTIONS", ["GratefulDead"])
+    if isinstance(collection_list, str):
+        collection_list = [x.strip() for x in collection_list.split(",") if x.strip()]
+    logger.info(f"Loading archive for collections: {collection_list}")
+    _archive = Archivary.Archivary(
+        dbpath=tm_config.DB_PATH,
+        reload_ids=False,
+        with_latest=False,
+        collection_list=collection_list,
+    )
+    logger.info(f"Archive loaded: {len(_archive.dates)} dates")
+    return _archive
+
+
+def _write_command(cmd, tape_id=None):
+    payload = {"cmd": cmd, "tape_id": tape_id, "issued_at": datetime.datetime.now().isoformat()}
+    tmp = CMD_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(payload, f)
+    os.replace(tmp, CMD_PATH)
 
 parser = optparse.OptionParser()
 parser.add_option(
@@ -295,6 +329,42 @@ STYLE = """
   a:hover { text-shadow: 0 0 14px #39ff14; }
 
   p { margin: 4px 0; }
+
+  .tape-card {
+    border: 1px solid #7722cc;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+  }
+
+  .badge-sbd {
+    background: #39ff14;
+    color: #0a0018;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 0.75em;
+    font-weight: bold;
+    vertical-align: middle;
+  }
+
+  ul.show-list, ul.track-list {
+    list-style: none;
+    padding-left: 0;
+    margin: 8px 0;
+  }
+
+  ul.show-list li { border-bottom: 1px solid #2a004a; }
+  ul.show-list li a { display: block; padding: 6px 4px; }
+  ul.track-list li { font-size: 0.85em; color: #ffd700; padding: 2px 0; }
+
+  .back-link { display: inline-block; margin-bottom: 12px; font-size: 0.9em; }
+
+  #now-playing-card { position: sticky; bottom: 16px; margin-top: 24px; }
+  #np-state { color: #39ff14; font-size: 1.1em; margin: 0; }
+  #np-track { color: #ffd700; margin: 4px 0 0; }
+  #np-venue { color: #aaaaaa; font-size: 0.85em; margin: 2px 0; }
+  #np-tape  { color: #888888; font-size: 0.75em; margin: 0; word-break: break-all; }
+  .np-controls button { padding: 8px 16px; font-size: 1.1em; }
 </style>
 """
 
@@ -375,6 +445,9 @@ class OptionsServer(object):
            </div>
            <div style="text-align:center">
              {bluetooth_button}
+             <form method="get" action="shows" style="display:inline">
+               <button type="submit">&#127911; Browse Shows</button>
+             </form>
              <form method="get" action="restart_tm_service" style="display:inline">
                <button type="submit">Restart Timemachine</button>
              </form>
@@ -713,6 +786,158 @@ class OptionsServer(object):
         </html>"""
 
         return page_string
+
+    # ------------------------------------------------------------------ #
+    # Show browser                                                         #
+    # ------------------------------------------------------------------ #
+
+    @cherrypy.expose
+    def shows(self, year=None, date=None):
+        try:
+            archive = _get_archive()
+        except Exception as e:
+            return f"""<html>{self._head("Browse Shows")}<body>
+              <h1>&#9760; Browse Shows &#9760;</h1>
+              <div class="card"><p style="color:#ff3dff">Archive loading failed: {e}</p>
+              <a href="/">Return</a></div></body></html>"""
+        if date is not None:
+            return self._shows_for_date(archive, date)
+        if year is not None:
+            return self._shows_for_year(archive, int(year))
+        return self._shows_year_list(archive)
+
+    def _shows_year_list(self, archive):
+        years = sorted(set(int(d[:4]) for d in archive.dates), reverse=True)
+        items = "".join(f'<li><a href="/shows?year={y}">{y}</a></li>' for y in years)
+        return f"""<html>{self._head("Browse Shows")}
+        <body>
+          <h1>&#9760; Browse Shows &#9760;</h1>
+          <div class="card">
+            <ul class="show-list">{items}</ul>
+          </div>
+          {self._now_playing_widget()}
+        </body></html>"""
+
+    def _shows_for_year(self, archive, year):
+        dates = sorted(d for d in archive.dates if d.startswith(str(year)))
+        items = "".join(f'<li><a href="/shows?date={d}">{d}</a></li>' for d in dates)
+        return f"""<html>{self._head(f"Shows: {year}")}
+        <body>
+          <h1>&#9760; {year} &#9760;</h1>
+          <div class="card">
+            <a class="back-link" href="/shows">&larr; All Years</a>
+            <ul class="show-list">{items}</ul>
+          </div>
+          {self._now_playing_widget()}
+        </body></html>"""
+
+    def _shows_for_date(self, archive, date):
+        tapes = archive.tape_dates.get(date, [])
+        year = date[:4]
+        venue = tapes[0].venue() if tapes else ""
+        cards = []
+        for tape in tapes:
+            try:
+                tape.get_metadata(only_if_cached=True)
+                tracks = tape._tracks or []
+            except Exception:
+                tracks = []
+            if not tracks:
+                track_html = '<li style="color:#888">Track list not yet cached — play once to load</li>'
+            else:
+                track_html = "".join(
+                    f"<li>{t.track or '?'}: {t.title}</li>" for t in tracks
+                )
+            sbd = '<span class="badge-sbd">SBD</span>' if tape.stream_only() else ""
+            rating = f"{tape.avg_rating:.1f} &#9733;" if tape.avg_rating else ""
+            fmt = ", ".join(tape.format) if isinstance(tape.format, list) else str(tape.format or "")
+            cards.append(f"""
+              <div class="tape-card">
+                <h3>{tape.identifier} {sbd}</h3>
+                <p>{rating} &nbsp; {tape.num_reviews or 0} reviews &nbsp; {fmt}</p>
+                <ul class="track-list">{track_html}</ul>
+                <form method="post" action="/play">
+                  <input type="hidden" name="tape_id" value="{tape.identifier}">
+                  <button type="submit">&#9654; Play This Tape</button>
+                </form>
+              </div>""")
+        body = "\n".join(cards) if cards else "<p>No tapes found for this date.</p>"
+        return f"""<html>{self._head(f"Shows: {date}")}
+        <body>
+          <h1>&#9760; {date} &#9760;</h1>
+          <h2>{venue}</h2>
+          <div class="card">
+            <a class="back-link" href="/shows?year={year}">&larr; {year}</a>
+            {body}
+          </div>
+          {self._now_playing_widget()}
+        </body></html>"""
+
+    @cherrypy.expose
+    def play(self, tape_id=None):
+        if tape_id:
+            _write_command("play", tape_id=tape_id)
+        raise cherrypy.HTTPRedirect("/shows")
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    def transport(self, action=None):
+        valid = {"pause", "stop", "next", "prev"}
+        if action not in valid:
+            cherrypy.response.status = 400
+            return {"error": f"action must be one of {sorted(valid)}"}
+        _write_command(action)
+        return {"ok": True, "action": action}
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    def status(self):
+        try:
+            with open(STATE_PATH, "r") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return {"play_state": 0, "play_state_name": "INIT", "tape_id": "",
+                    "track_title": "", "venue": "", "date": ""}
+        except Exception as e:
+            logger.warning(f"/status read error: {e}")
+            cherrypy.response.status = 500
+            return {"error": str(e)}
+
+    def _now_playing_widget(self):
+        return """
+        <div class="card" id="now-playing-card">
+          <h3>&#127925; Now Playing</h3>
+          <p id="np-state">Loading...</p>
+          <p id="np-tape"></p>
+          <p id="np-venue"></p>
+          <p id="np-track"></p>
+          <div class="btn-row np-controls">
+            <button onclick="transport('prev')">&#9664;&#9664; Prev</button>
+            <button onclick="transport('pause')" id="btn-pause">&#9646;&#9646; Pause</button>
+            <button onclick="transport('stop')">&#9632; Stop</button>
+            <button onclick="transport('next')">Next &#9654;&#9654;</button>
+          </div>
+        </div>
+        <script>
+          function transport(action) {
+            fetch('/transport?action=' + action, {method: 'POST'}).catch(console.error);
+          }
+          function pollStatus() {
+            fetch('/status').then(r => r.json()).then(d => {
+              document.getElementById('np-state').textContent = d.play_state_name || '';
+              document.getElementById('np-tape').textContent = d.tape_id || '';
+              document.getElementById('np-venue').textContent = d.venue || '';
+              const next = d.next_track_title ? '  ▶  ' + d.next_track_title : '';
+              document.getElementById('np-track').textContent = (d.track_title || '') + next;
+              const pb = document.getElementById('btn-pause');
+              pb.innerHTML = d.play_state === 2 ? '► Resume' : '‖‖ Pause';
+            }).catch(() => {
+              document.getElementById('np-state').textContent = 'Unavailable';
+            });
+          }
+          pollStatus();
+          setInterval(pollStatus, 2000);
+        </script>"""
 
 
 def get_ip():
