@@ -21,14 +21,9 @@ import string
 import subprocess
 import sys
 
-from tenacity import retry
-from tenacity.retry import retry_if_result
-from tenacity.stop import stop_after_attempt, stop_after_delay
-from tenacity.wait import wait_random
-from typing import Callable
-
 from timemachine import controls
 from timemachine import utils
+from timemachine.utils import retry_call_quick as retry_call, retry_until_true, return_last_value
 
 
 parser = optparse.OptionParser()
@@ -87,27 +82,6 @@ else:
 
 for k in parms.__dict__.keys():
     print(f"{k:20s} : {parms.__dict__[k]}")
-
-
-@retry(stop=stop_after_delay(10))
-def retry_call(callable: Callable, *args, **kwargs):
-    """Retry a call."""
-    return callable(*args, **kwargs)
-
-
-def return_last_value(retry_state):
-    """return the result of the last call made in a tenacity retry"""
-    return retry_state.outcome.result()
-
-
-@retry(
-    stop=stop_after_attempt(7),
-    wait=wait_random(min=1, max=2),
-    retry=retry_if_result(lambda x: not x),
-    retry_error_callback=return_last_value,
-)
-def retry_until_true(callable: Callable, *args, **kwargs):
-    return callable(*args, **kwargs)
 
 
 max_choices = len(string.printable)
@@ -194,8 +168,8 @@ def update_wpa_conf(wpa_path, wifi, passkey, extra_dict):
         wpa = wpa + [f"        {k}={v}"]
     wpa = wpa + ["    }\n"]
     new_wpa_path = os.path.join(os.getenv("HOME"), "wpa_supplicant.conf")
-    f = open(new_wpa_path, "w")
-    f.write("\n".join(wpa))
+    with open(new_wpa_path, "w") as f:
+        f.write("\n".join(wpa))
     cmd = f"sudo mv {new_wpa_path} {wpa_path}"
     _ = subprocess.check_output(cmd, shell=True)
     cmd = f"sudo chown root {wpa_path}"

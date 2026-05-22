@@ -32,13 +32,12 @@ import time
 from threading import Event, Lock, Thread
 
 from operator import methodcaller
-from tenacity import retry
-from tenacity.stop import stop_after_delay
-from typing import Callable, Optional
+from typing import Optional
 
 import pkg_resources
 from timemachine import config
 from timemachine import utils
+from timemachine.utils import flatten, retry_call, to_date, to_decade, to_year
 
 logging.basicConfig(
     format="%(asctime)s.%(msecs)03d %(levelname)s: %(name)s %(message)s",
@@ -51,35 +50,6 @@ logger = logging.getLogger(__name__)
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 BIN_DIR = os.path.join(os.path.dirname(ROOT_DIR), "bin")
 
-
-@retry(stop=stop_after_delay(30))
-def retry_call(callable: Callable, *args, **kwargs):
-    """Retry a call."""
-    return callable(*args, **kwargs)
-
-
-def flatten(lis):
-    lis_flat = []
-    for elem in lis:
-        for subelem in elem:
-            lis_flat.append(subelem)
-    return lis_flat
-
-
-def to_date(datestring):
-    return datetime.datetime.fromisoformat(datestring)
-
-
-def to_year(datestring):
-    if type(datestring) == list:  # handle one bad case on 2009.01.10
-        datestring = datestring[0]
-    return to_date(datestring[:10]).year
-
-
-def to_decade(datestring):
-    if type(datestring) == list:  # handle one bad case on 2009.01.10
-        datestring = datestring[0]
-    return 10 * divmod(to_date(datestring[:10]).year, 10)[0]
 
 
 class BaseTapeDownloader(abc.ABC):
@@ -99,7 +69,8 @@ class BaseTapeDownloader(abc.ABC):
             orig_tapes = []
             outpath = os.path.join(iddir, f"ids_{period}.json")
             if os.path.exists(outpath):
-                orig_tapes = json.load(open(outpath, "r"))
+                with open(outpath, "r") as f:
+                    orig_tapes = json.load(f)
             tapes_from_period = [t for t in tapes if period_func(t["date"]) == period]
             new_ids = [x["identifier"] for x in tapes_from_period]
             period_tapes = [x for x in orig_tapes if not x["identifier"] in new_ids] + tapes_from_period
@@ -111,7 +82,8 @@ class BaseTapeDownloader(abc.ABC):
                 logger.info(f"Writing {len(period_tapes)} tapes to {outpath}")
                 try:
                     tmpfile = tempfile.mkstemp(".json")[1]
-                    json.dump(period_tapes, open(tmpfile, "w"), indent=2)
+                    with open(tmpfile, "w") as f:
+                        json.dump(period_tapes, f, indent=2)
                     os.rename(tmpfile, outpath)
                     logger.debug(f"renamed {tmpfile} to {outpath}")
                 except Exception:
@@ -161,7 +133,7 @@ class Archivary:
 
         local_mode = utils.get_local_mode()
 
-        if ("Phish" in self.collection_list) & (local_mode < 3):
+        if ("Phish" in self.collection_list) and (local_mode < 3):
             try:
                 phishin_archive = PhishinArchive(dbpath=dbpath, reload_ids=reload_ids, with_latest=with_latest)
             except Exception:
@@ -172,7 +144,7 @@ class Archivary:
                 local_archive = LocalArchive(collection_list=local_collections, url=f"file://{local_home}")
             else:
                 logger.error(f"Unable to initialize the local archive. {local_home} not writable")
-        if (len(ia_collections) > 0) & (local_mode < 3):
+        if (len(ia_collections) > 0) and (local_mode < 3):
             ia_archive = GDArchive(
                 dbpath=dbpath,
                 reload_ids=reload_ids,
@@ -516,7 +488,8 @@ class PhishinTapeDownloader(BaseTapeDownloader):
         self.url = url
         self.api = f"{self.url}/api/v1/shows"
         try:
-            self.apikey = open(os.path.join(os.getenv("HOME"), ".phishinkey"), "r").read().rstrip()
+            with open(os.path.join(os.getenv("HOME"), ".phishinkey"), "r") as f:
+                self.apikey = f.read().rstrip()
         except Exception:
             self.apikey = '8003bcd8c378844cfb69aad8b0981309f289e232fb417df560f7192edd295f1d49226ef6883902e59b465991d0869c77'
         self.parms = {"sort_attr": "date", "sort_dir": "desc", "per_page": "300"}
@@ -618,7 +591,8 @@ class IATapeDownloader(BaseTapeDownloader):
         collection_path = os.path.join(os.getenv("HOME"), ".etree_collection_names.json")
         if not os.path.exists(collection_path):
             self.save_all_collection_names()
-        json_data = json.load(open(collection_path, "r"))
+        with open(collection_path, "r") as f:
+            json_data = json.load(f)
         collection_names = [x['identifier'] for x in json_data['items']]
         # collection_names = [x.lower() for x in collection_names]
         return collection_names
@@ -654,7 +628,8 @@ class IATapeDownloader(BaseTapeDownloader):
         collection_path = os.path.join(os.getenv("HOME"), ".etree_collection_names.json")
         try:
             tmpfile = tempfile.mkstemp(".json")[1]
-            json.dump(j, open(tmpfile, "w"))
+            with open(tmpfile, "w") as f:
+                json.dump(j, f)
             os.rename(tmpfile, collection_path)
         except Exception:
             logger.debug(f"removing {tmpfile}")
@@ -935,11 +910,13 @@ class PhishinArchive(BaseArchive):
         if os.path.isdir(self.idpath):
             for filename in os.listdir(self.idpath):
                 if filename.endswith(".json"):
-                    chunk = json.load(open(os.path.join(self.idpath, filename), "r"))
+                    with open(os.path.join(self.idpath, filename), "r") as f:
+                        chunk = json.load(f)
                     # chunk = [t for t in chunk if any(x in self.collection_list for x in t['collection'])]
                     tapes.extend(chunk)
         else:
-            tapes = json.load(open(self.idpath, "r"))
+            with open(self.idpath, "r") as f:
+                tapes = json.load(f)
             # addeddates.append(max([x['addeddate'] for x in tapes]))
             # tapes = [t for t in tapes if any(x in self.collection_list for x in t['collection'])]
         max_addeddate = None
@@ -991,7 +968,8 @@ class PhishinTape(BaseTape):
         self.meta_path = os.path.join(self.dbpath, str(date.year), str(date.month), self.identifier + ".json")
         self.url_metadata = "https://phish.in/api/v1/shows/" + self.date
         try:
-            self.apikey = open(os.path.join(os.getenv("HOME"), ".phishinkey"), "r").read().rstrip()
+            with open(os.path.join(os.getenv("HOME"), ".phishinkey"), "r") as f:
+                self.apikey = f.read().rstrip()
         except Exception:
             self.apikey = '8003bcd8c378844cfb69aad8b0981309f289e232fb417df560f7192edd295f1d49226ef6883902e59b465991d0869c77'
         self.parms = {"sort_attr": "date", "sort_dir": "asc", "per_page": "300"}
@@ -1014,7 +992,8 @@ class PhishinTape(BaseTape):
             return
         self._tracks = []
         try:  # I used to check if file exists, but it may also be corrupt, so this is safer.
-            page_meta = json.load(open(self.meta_path, "r"))
+            with open(self.meta_path, "r") as f:
+                page_meta = json.load(f)
         except Exception:
             parms = self.parms.copy()
             parms["page"] = 1
@@ -1048,7 +1027,8 @@ class PhishinTape(BaseTape):
             self._tracks.append(PhishinTrack(track_data, self.identifier))
 
         os.makedirs(os.path.dirname(self.meta_path), exist_ok=True)
-        json.dump(page_meta, open(self.meta_path, "w"),indent=2)
+        with open(self.meta_path, "w") as f:
+            json.dump(page_meta, f, indent=2)
         self.meta_loaded = True
         # return page_meta
         for track in self._tracks:
@@ -1203,7 +1183,8 @@ class LocalTape(BaseTape):
             return
         self._tracks = []
         if os.path.exists(self.meta_path):
-            page_meta = json.load(open(self.meta_path, "r"))
+            with open(self.meta_path, "r") as f:
+                page_meta = json.load(f)
         else:  # I used to check if file exists, but it may also be corrupt, so this is safer.
             logger.warning(f"creating metadata for {self.identifier} in {self.meta_path}")
             try:
@@ -1234,7 +1215,8 @@ class LocalTape(BaseTape):
             self._tracks.append(LocalTrack(track_data, self.identifier))
 
         os.makedirs(os.path.dirname(self.meta_path), exist_ok=True)
-        json.dump(page_meta, open(self.meta_path, "w"),indent=2)
+        with open(self.meta_path, "w") as f:
+            json.dump(page_meta, f, indent=2)
         self.meta_loaded = True
         # return page_meta
         for track in self._tracks:
@@ -1378,7 +1360,8 @@ class LocalTape(BaseTape):
                     page_meta["data"]["tracks"].append({"position":i+1,"set":set_num,"path":audio_file,"title":titles[i]})
 
         try:
-            json.dump(page_meta,open(path,'w'),indent=2)
+            with open(path, "w") as f:
+                json.dump(page_meta, f, indent=2)
             logger.info(f"Metadata written to {path}")
         except Exception:
             logger.warning(f"Failed to write metadata to {path}")
@@ -1537,12 +1520,14 @@ class GDArchive(BaseArchive):
                     # if min_year <= time_period <= max_year:
                     if time_period in years_to_load:
                         logger.debug(f"loading time period {time_period}")
-                        chunk = json.load(open(os.path.join(meta_path, filename), "r"))
+                        with open(os.path.join(meta_path, filename), "r") as f:
+                            chunk = json.load(f)
                         addeddates.append(max([x["addeddate"] for x in chunk]))
                         chunk = [t for t in chunk if any(x in self.collection_list for x in t["collection"])]
                         tapes.extend(chunk)
         else:
-            tapes = json.load(open(meta_path, "r"))
+            with open(meta_path, "r") as f:
+                tapes = json.load(f)
             addeddates.append(max([x["addeddate"] for x in tapes]))
             tapes = [t for t in tapes if any(x in self.collection_list for x in t["collection"])]
         max_addeddate = max(addeddates) if len(tapes) > 0 else None
@@ -1709,7 +1694,8 @@ class GDTape(BaseTape):
             return
         self._tracks = []
         try:  # I used to check if file exists, but it may also be corrupt, so this is safer.
-            page_meta = json.load(open(self.meta_path, "r"))
+            with open(self.meta_path, "r") as f:
+                page_meta = json.load(f)
         except Exception:
             r = requests.get(self.url_metadata)
             logger.debug("url is {}".format(r.url))
@@ -1778,7 +1764,8 @@ class GDTape(BaseTape):
 
     def write_metadata(self, page_meta):
         os.makedirs(os.path.dirname(self.meta_path), exist_ok=True)
-        json.dump(page_meta, open(self.meta_path, "w"),indent=2)
+        with open(self.meta_path, "w") as f:
+            json.dump(page_meta, f, indent=2)
         self.meta_loaded = True
 
     def append_track(self, tdict, orig_titles={}, orig_tracks={}):

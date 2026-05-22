@@ -22,7 +22,6 @@ import subprocess
 from bisect import bisect
 from threading import BoundedSemaphore, Event
 from time import sleep
-from typing import Callable
 
 import adafruit_rgb_display.st7735 as st7735
 import board
@@ -31,10 +30,8 @@ import pkg_resources
 from adafruit_rgb_display import color565
 from gpiozero import LED, Button, RotaryEncoder
 from PIL import Image, ImageDraw, ImageFont
-from tenacity import retry
-from tenacity.stop import stop_after_delay
-
 from timemachine import Archivary, config
+from timemachine.utils import retry_call_quick as retry_call
 
 logging.basicConfig(
     format="%(asctime)s.%(msecs)03d %(levelname)s: %(name)s %(message)s",
@@ -51,12 +48,6 @@ FONTS_DIR = os.path.join(ROOT_DIR, "fonts")
 screen_semaphore = BoundedSemaphore(1)
 state_semaphore = BoundedSemaphore(1)
 QUIESCENT_TIME = 20
-
-
-@retry(stop=stop_after_delay(10))
-def retry_call(callable: Callable, *args, **kwargs):
-    """Retry a call."""
-    return callable(*args, **kwargs)
 
 
 def with_state_semaphore(func):
@@ -461,11 +452,10 @@ class Time_Machine_Board:
     def get_knob_sense(self):
         knob_sense_path = os.path.join(os.getenv("HOME"), ".knob_sense")
         try:
-            kfile = open(knob_sense_path, "r")
-            knob_sense = int(kfile.read())
+            with open(knob_sense_path, "r") as kfile:
+                knob_sense = int(kfile.read())
             if knob_sense > 7 or knob_sense < 0:
                 raise ValueError
-            kfile.close()
         except Exception as e:
             logger.warning(f"error in get_knob_sense {e}. Setting knob_sense to 0")
             knob_sense = 0
@@ -800,7 +790,7 @@ class screen:
             disp_desc_path = os.path.join(os.getenv("HOME"), ".screen_desc")
             if os.path.exists(disp_desc_path):
                 for line in open(disp_desc_path, "r").readlines():
-                    if ("psychedelic_row" in line) & ("true" in line.lower()):
+                    if ("psychedelic_row" in line) and ("true" in line.lower()):
                         self.desc["psychedelic_row"] = True
         except Exception:
             pass

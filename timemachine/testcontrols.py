@@ -1,15 +1,14 @@
-from timemachine import controls
-from timemachine import config
 import datetime
 from threading import Event
-from typing import Callable
+
 import board
 import digitalio
-from adafruit_rgb_display.st7735 import ST7735R
 from adafruit_rgb_display import color565
-from gpiozero import RotaryEncoder, Button
-from tenacity import retry
-from tenacity.stop import stop_after_delay
+from adafruit_rgb_display.st7735 import ST7735R
+from gpiozero import Button, RotaryEncoder
+
+from timemachine import config, controls
+from timemachine.utils import retry_call_quick as retry_call
 
 controls.logger.setLevel(50)
 d1 = "1977-05-08"
@@ -21,12 +20,6 @@ d2 = "1979-11-02"
 d2 = datetime.date(*(int(s) for s in d2.split("-")))
 scr.show_selected_date(d2)
 scr.show_text("Venue", (0, 30))
-
-
-@retry(stop=stop_after_delay(10))
-def retry_call(callable: Callable, *args, **kwargs):
-    """Retry a call."""
-    return callable(*args, **kwargs)
 
 
 def twist_knob(screen_event: Event, knob: RotaryEncoder, label, date_reader: controls.date_knob_reader):

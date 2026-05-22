@@ -109,7 +109,8 @@ def get_collection_names():
     collection_path = os.path.join(os.getenv("HOME"), ".etree_collection_names.json")
     collection_names = []
     try:
-        data = json.load(open(collection_path, "r"))["items"]
+        with open(collection_path, "r") as f:
+            data = json.load(f)["items"]
         collection_names = [x["identifier"] for x in data]
     except Exception:
         logger.warning(f"Failed to read collection names from {collection_path}.")
@@ -122,7 +123,8 @@ def read_optd():
     opt_dict_default = default_options()
     opt_dict = opt_dict_default
     try:
-        opt_dict = json.load(open(config.OPTIONS_PATH, "r"))
+        with open(config.OPTIONS_PATH, "r") as f:
+            opt_dict = json.load(f)
         extra_keys = [k for k in opt_dict_default.keys() if k not in opt_dict.keys()]
         for k in extra_keys:
             opt_dict[k] = opt_dict_default[k]
