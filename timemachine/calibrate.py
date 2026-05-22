@@ -7,11 +7,8 @@ import subprocess
 import sys
 from time import sleep
 
-from tenacity import retry
-from tenacity.stop import stop_after_delay
-from typing import Callable
-
 from timemachine import controls
+from timemachine.utils import retry_call_quick as retry_call
 
 
 parser = optparse.OptionParser()
@@ -77,12 +74,6 @@ for k in parms.__dict__.keys():
     print(f"{k:20s} : {parms.__dict__[k]}")
 
 
-@retry(stop=stop_after_delay(10))
-def retry_call(callable: Callable, *args, **kwargs):
-    """Retry a call."""
-    return callable(*args, **kwargs)
-
-
 max_choices = len(string.printable)
 
 TMB = controls.Time_Machine_Board(
@@ -141,9 +132,8 @@ def save_knob_sense(save_calibration=True):
     TMB.scr.show_text("Knobs\nCalibrated", font=TMB.scr.boldsmall, color=(0, 255, 255), force=False, clear=True)
     TMB.scr.show_text(f"      {new_knob_sense}", font=TMB.scr.boldsmall, loc=(0, 60), force=True)
     if save_calibration:
-        f = open(knob_sense_path, "w")
-        f.write(str(new_knob_sense))
-        f.close()
+        with open(knob_sense_path, "w") as f:
+            f.write(str(new_knob_sense))
     else:
         TMB.scr.show_text(f"{new_knob_sense}", font=TMB.scr.boldsmall, loc=(0, 60), force=True)
         sleep(1)
@@ -160,15 +150,13 @@ def save_screen_desc():
     while (not TMB.m_knob_event.is_set()) and (not TMB.y_knob_event.is_set()) and (not TMB.button_event.is_set()):
         sleep(1)
     if TMB.y_knob_event.is_set():
-        f = open(screen_desc_path, "w")
-        f.write("psychedelic_row : false")
+        with open(screen_desc_path, "w") as f:
+            f.write("psychedelic_row : false")
         TMB.scr.show_text("Thank You!", font=TMB.scr.smallfont, force=True, clear=True)
-        f.close()
     if TMB.m_knob_event.is_set():
-        f = open(screen_desc_path, "w")
-        f.write("psychedelic_row : true")
+        with open(screen_desc_path, "w") as f:
+            f.write("psychedelic_row : true")
         TMB.scr.show_text("Unwanted row\nwill be \nremoved", font=TMB.scr.smallfont, force=True, clear=True)
-        f.close()
     TMB.clear_events()
     sleep(1)
     return
@@ -216,7 +204,8 @@ def configure_collections(parms):
     sleep(2)
     tmpd = default_options()
     try:
-        tmpd = json.load(open(parms.options_path, "r"))
+        with open(parms.options_path, "r") as f:
+            tmpd = json.load(f)
     except Exception:
         logger.warning(f"Failed to read options from {parms.options_path}. Using defaults")
     tmpd["COLLECTIONS"] = collection

@@ -29,11 +29,9 @@ from threading import Event, Lock
 from time import sleep
 
 from gpiozero import RotaryEncoder
-from tenacity import retry
-from tenacity.stop import stop_after_delay
-from typing import Callable
 
 from timemachine import Archivary, config, controls, GD
+from timemachine.utils import retry_call_quick as retry_call
 
 knob_sense_path = os.path.join(os.getenv("HOME"), ".knob_sense")
 
@@ -72,12 +70,6 @@ random.seed(datetime.datetime.now().timestamp())  # to ensure that random show w
 parms = None
 
 
-@retry(stop=stop_after_delay(10))
-def retry_call(callable: Callable, *args, **kwargs):
-    """Retry a call."""
-    return callable(*args, **kwargs)
-
-
 def sequential(func):
     def inner(*args, **kwargs):
         free_event.wait()
@@ -100,8 +92,8 @@ def load_saved_state(state):
         logger.info(f"Creating state path {state_path}")
         open(state_path, "a").close()
     try:
-        f = open(state_path, "r")
-        loaded_state = json.loads(f.read())
+        with open(state_path, "r") as f:
+            loaded_state = json.loads(f.read())
     except Exception as e:
         logger.warning(
             f"---------- ERROR READING state file {state_path} ------ this is probably ok, as long as it doesn't persist"
@@ -820,11 +812,10 @@ def refresh_venue(state):
         venue = city_state = vcs
 
     if tape_id is None:
-        tape_id = venue
+        tape_id = venue  # fall back to venue name when no tape is loaded
 
     # logger.debug(f'venue {venue}, city_state {city_state}')
 
-    tape_id == venue  # This is an arbitrary condition...fix!
     id_color = (0, 255, 255)
 
     if venue_counter[0] == 0:
@@ -1123,7 +1114,8 @@ if TMB.stop.is_pressed:
 def set_date_range():
     start_year = 1880
     collection_path = os.path.join(os.getenv("HOME"), ".etree_collection_names.json")
-    d = json.load(open(collection_path, "r"))
+    with open(collection_path, "r") as f:
+        d = json.load(f)
     etree_collections = [x["identifier"].lower() for x in d["items"]]
     my_collections = [x.lower() for x in config.optd["COLLECTIONS"]]
     if set(my_collections).issubset(etree_collections):
@@ -1173,9 +1165,8 @@ def my_handler(event):
 
 
 try:
-    kfile = open(knob_sense_path, "r")
-    knob_sense = int(kfile.read())
-    kfile.close()
+    with open(knob_sense_path, "r") as kfile:
+        knob_sense = int(kfile.read())
 except Exception:
     knob_sense = 7
 

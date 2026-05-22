@@ -29,11 +29,9 @@ from threading import Event, Lock
 from time import sleep
 
 from gpiozero import RotaryEncoder
-from tenacity import retry
-from tenacity.stop import stop_after_delay
-from typing import Callable
 
 from timemachine import Archivary, config, controls, GD
+from timemachine.utils import retry_call_quick as retry_call
 
 knob_sense_path = os.path.join(os.getenv("HOME"), ".knob_sense")
 
@@ -72,12 +70,6 @@ random.seed(datetime.datetime.now().timestamp())  # to ensure that random show w
 parms = None
 
 
-@retry(stop=stop_after_delay(10))
-def retry_call(callable: Callable, *args, **kwargs):
-    """Retry a call."""
-    return callable(*args, **kwargs)
-
-
 def sequential(func):
     def inner(*args, **kwargs):
         free_event.wait()
@@ -102,8 +94,8 @@ def load_saved_state(state):
     try:
         current = state.get_current()
         # if not os.path.exists(state_path):
-        f = open(state_path, "r")
-        loaded_state = json.loads(f.read())
+        with open(state_path, "r") as f:
+            loaded_state = json.loads(f.read())
         fields_to_load = [
             "DATE",
             "STAGED_DATE",
@@ -810,7 +802,7 @@ def event_loop(state, lock):
                     if ((i_tape + 1) % 5) == 0:  # flip every 5th song
                         logger.debug("inserting record flip")
                         artist_tapes[i_tape - 1].insert_breaks(breaks={"flip": [0]}, force=True)
-                if (((i_artist + 1) % 4) == 0) & (i_tape == 0):  # flip every 4th record
+                if (((i_artist + 1) % 4) == 0) and (i_tape == 0):  # flip every 4th record
                     logger.debug("changing record")
                     artist_tapes[i_tape - 1].insert_breaks(breaks={"record": [0]}, force=True)
                 logger.debug(f"artist {i_artist+1}/{len(current['CHOSEN_ARTISTS'])}")
@@ -1003,9 +995,8 @@ def board_callbacks():
 
 
 try:
-    kfile = open(knob_sense_path, "r")
-    knob_sense = int(kfile.read())
-    kfile.close()
+    with open(knob_sense_path, "r") as kfile:
+        knob_sense = int(kfile.read())
 except Exception:
     knob_sense = 7
 

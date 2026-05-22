@@ -14,14 +14,21 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
+import datetime
 import json
 import logging
 import os
 import psutil
 import re
 import subprocess
+from typing import Callable
 
 import pkg_resources
+
+from tenacity import retry
+from tenacity.retry import retry_if_result
+from tenacity.stop import stop_after_attempt, stop_after_delay
+from tenacity.wait import wait_random
 
 from timemachine import config
 
@@ -37,6 +44,86 @@ logger = logging.getLogger(__name__)
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 OS_VERSION = None
+
+# ---------------------------------------------------------------------------
+# Retry helpers
+# ---------------------------------------------------------------------------
+
+@retry(stop=stop_after_delay(30))
+def retry_call(callable: Callable, *args, **kwargs):
+    """Retry a callable for up to 30 seconds. Use for network / archive I/O."""
+    return callable(*args, **kwargs)
+
+
+@retry(stop=stop_after_delay(10))
+def retry_call_quick(callable: Callable, *args, **kwargs):
+    """Retry a callable for up to 10 seconds. Use for hardware / UI operations."""
+    return callable(*args, **kwargs)
+
+
+def return_last_value(retry_state):
+    """Return the result of the last call attempt in a tenacity retry chain."""
+    return retry_state.outcome.result()
+
+
+@retry(
+    stop=stop_after_attempt(7),
+    wait=wait_random(min=1, max=2),
+    retry=retry_if_result(lambda x: not x),
+    retry_error_callback=return_last_value,
+)
+def retry_until_true(callable: Callable, *args, **kwargs):
+    """Retry a callable until it returns a truthy value (up to 7 attempts)."""
+    return callable(*args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Date utilities
+# ---------------------------------------------------------------------------
+
+def to_date(datestring) -> datetime.datetime:
+    """Parse an ISO-format date string into a datetime.datetime."""
+    return datetime.datetime.fromisoformat(datestring)
+
+
+def to_year(datestring) -> int:
+    """Return the year from an ISO-format date string."""
+    if isinstance(datestring, list):  # handle one bad case on 2009.01.10
+        datestring = datestring[0]
+    return to_date(datestring[:10]).year
+
+
+def to_decade(datestring) -> int:
+    """Return the decade (e.g. 1970) from an ISO-format date string."""
+    if isinstance(datestring, list):  # handle one bad case on 2009.01.10
+        datestring = datestring[0]
+    return 10 * divmod(to_date(datestring[:10]).year, 10)[0]
+
+
+# ---------------------------------------------------------------------------
+# General collection utilities
+# ---------------------------------------------------------------------------
+
+def flatten(lis):
+    """Flatten one level of nesting from a list of lists."""
+    return [subelem for elem in lis for subelem in elem]
+
+
+def memoize(f):
+    """Simple single-argument memoization decorator."""
+    memo = {}
+
+    def helper(x):
+        if x not in memo:
+            memo[x] = f(x)
+        return memo[x]
+
+    return helper
+
+
+# ---------------------------------------------------------------------------
+# OS / system utilities
+# ---------------------------------------------------------------------------
 
 def get_os_info(field="VERSION_ID"):
     retval = None
@@ -124,7 +211,7 @@ def usb_mounted(archive_dir):
     partitions = psutil.disk_partitions()
     try:
         for p in partitions:
-            if (p.mountpoint == "/mnt/usb") & is_writable(archive_dir):
+            if (p.mountpoint == "/mnt/usb") and is_writable(archive_dir):
                 return True
     except Exception:
         return False

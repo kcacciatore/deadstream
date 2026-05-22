@@ -85,8 +85,8 @@ def default_options():
 def save_options(optd_to_save):
     logger.debug(f"in save_options. optd {optd_to_save}")
     options = {}
-    f = open(OPTIONS_PATH, "r")
-    tmpd = json.loads(f.read())
+    with open(OPTIONS_PATH, "r") as f:
+        tmpd = json.loads(f.read())
     if optd_to_save["COLLECTIONS"] == None:
         optd_to_save["COLLECTIONS"] = tmpd["COLLECTIONS"]
     for arg in optd_to_save.keys():
@@ -110,8 +110,8 @@ def load_options():
     optd = default_options()
     tmpd = {}
     try:
-        f = open(OPTIONS_PATH, "r")
-        tmpd = json.loads(f.read())
+        with open(OPTIONS_PATH, "r") as f:
+            tmpd = json.loads(f.read())
         for k in optd.keys():
             logger.debug(f"Loading options key is {k}")
             try:
