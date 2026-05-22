@@ -63,6 +63,11 @@ SLEEP_AFTER_SECONDS = 3600
 PWR_LED_ON = False
 AUTO_PLAY = True
 
+CMD_PATH = os.path.join(os.getenv("HOME"), ".timemachine_cmd.json")
+STATE_PATH = os.path.join(os.getenv("HOME"), ".timemachine_state.json")
+CMD_STALE_SECONDS = 10
+PLAY_STATE_NAMES = {-1: "NOT_READY", 0: "INIT", 1: "READY", 2: "PAUSED", 3: "STOPPED", 4: "PLAYING", 5: "ENDED"}
+
 random.seed(datetime.datetime.now().timestamp())  # to ensure that random show will be new each time.
 parms = None
 
@@ -194,6 +199,139 @@ def set_logger_debug():
     logger.setLevel(logging.DEBUG)
     GDLogger.setLevel(logging.DEBUG)
     controlsLogger.setLevel(logging.INFO)
+
+
+def write_status_file(state):
+    try:
+        current = state.get_current()
+        payload = {
+            "play_state": current.get("PLAY_STATE", config.INIT),
+            "play_state_name": PLAY_STATE_NAMES.get(current.get("PLAY_STATE", 0), "UNKNOWN"),
+            "tape_id": current.get("TAPE_ID", ""),
+            "date": str(current.get("DATE", "")),
+            "venue": current.get("VENUE", ""),
+            "artist": current.get("ARTIST", ""),
+            "track_num": current.get("TRACK_NUM", -1),
+            "track_title": current.get("TRACK_TITLE", ""),
+            "next_track_title": current.get("NEXT_TRACK_TITLE", ""),
+            "updated_at": datetime.datetime.now().isoformat(),
+        }
+        tmp = STATE_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp, STATE_PATH)
+    except Exception as e:
+        logger.warning(f"write_status_file failed: {e}")
+
+
+def poll_command_file(state):
+    if not os.path.exists(CMD_PATH):
+        return
+    try:
+        with open(CMD_PATH, "r") as f:
+            payload = json.load(f)
+        os.remove(CMD_PATH)
+    except Exception as e:
+        logger.warning(f"poll_command_file: error reading {CMD_PATH}: {e}")
+        try:
+            os.remove(CMD_PATH)
+        except Exception:
+            pass
+        return
+    try:
+        issued_at = datetime.datetime.fromisoformat(payload.get("issued_at", "2000-01-01"))
+        age = (datetime.datetime.now() - issued_at).total_seconds()
+        if age > CMD_STALE_SECONDS:
+            logger.warning(f"Discarding stale web command (age={age:.1f}s): {payload}")
+            return
+        cmd = payload.get("cmd")
+        logger.info(f"Web command received: {cmd}")
+        if cmd == "play":
+            _web_play(payload.get("tape_id"), state)
+        elif cmd == "pause":
+            _web_pause_resume(state)
+        elif cmd == "stop":
+            _web_stop(state)
+        elif cmd == "next":
+            _web_next(state)
+        elif cmd == "prev":
+            _web_prev(state)
+    except Exception as e:
+        logger.warning(f"poll_command_file: error processing command: {e}")
+
+
+def _web_play(tape_id, state):
+    if not tape_id:
+        return
+    archive = state.date_reader.archive
+    tape = None
+    for date_tapes in archive.tape_dates.values():
+        for t in date_tapes:
+            if t.identifier == tape_id:
+                tape = t
+                break
+        if tape:
+            break
+    if tape is None:
+        logger.warning(f"_web_play: tape_id {tape_id!r} not found in archive")
+        return
+    state.date_reader.set_date(tape.date if hasattr(tape.date, 'year') else
+                               datetime.date.fromisoformat(str(tape.date)[:10]))
+    select_tape(tape, state, autoplay=True)
+    TMB.select_event.set()
+    stagedate_event.set()
+
+
+def _web_pause_resume(state):
+    current = state.get_current()
+    if current["PLAY_STATE"] == config.PLAYING:
+        state.player.pause()
+        current["PAUSED_AT"] = datetime.datetime.now()
+        current["PLAY_STATE"] = config.PAUSED
+        state.set(current)
+        playstate_event.set()
+    elif current["PLAY_STATE"] in [config.PAUSED, config.STOPPED]:
+        current["PLAY_STATE"] = config.PLAYING
+        state.player.play()
+        state.set(current)
+        playstate_event.set()
+    elif current["PLAY_STATE"] in [config.READY, config.ENDED]:
+        if current["TAPE_ID"]:
+            tape = state.player.tape
+            state.player.insert_tape(tape)
+            current["PLAY_STATE"] = config.PLAYING
+            state.player.play()
+            state.set(current)
+            playstate_event.set()
+
+
+def _web_stop(state):
+    current = state.get_current()
+    if current["PLAY_STATE"] in [config.READY, config.INIT, config.STOPPED]:
+        return
+    state.player.stop()
+    current["PLAY_STATE"] = config.STOPPED
+    current["PAUSED_AT"] = datetime.datetime.now()
+    state.set(current)
+    playstate_event.set()
+
+
+def _web_next(state):
+    current = state.get_current()
+    if current["PLAY_STATE"] not in [config.PLAYING, config.PAUSED]:
+        return
+    state.player.next()
+
+
+def _web_prev(state):
+    current = state.get_current()
+    if current["PLAY_STATE"] not in [config.PLAYING, config.PAUSED]:
+        return
+    if current["TRACK_NUM"] == 0:
+        state.player.stop()
+        state.player.play()
+    else:
+        state.player.prev()
 
 
 def select_tape(tape, state, autoplay=True):
@@ -760,7 +898,7 @@ def get_current(state):
     return current
 
 
-def show_venue_text(arg, color=(0, 255, 255), show_id=False, offset=0, force=False):
+def show_venue_text(arg, color=controls.COLOR_VENUE, show_id=False, offset=0, force=False):
     if isinstance(arg, controls.date_knob_reader):
         date_reader = arg
         archive = date_reader.archive
@@ -810,6 +948,7 @@ def event_loop(state, lock):
     # loop_delay = 0.5
     try:
         while not stop_loop_event.wait(timeout=loop_delay):
+            poll_command_file(state)
             if not free_event.wait(timeout=0.01):
                 continue
             lock.acquire()
@@ -869,6 +1008,7 @@ def event_loop(state, lock):
                 update_tracks(state)
                 track_event.clear()
                 TMB.screen_event.set()
+                write_status_file(state)
             if TMB.select_event.is_set():
                 current = state.get_current()
                 TMB.scr.show_selected_date(current["DATE"])
@@ -880,6 +1020,7 @@ def event_loop(state, lock):
                 TMB.scr.show_playstate()
                 playstate_event.clear()
                 TMB.screen_event.set()
+                write_status_file(state)
             if q_counter and config.DATE and idle_seconds > QUIESCENT_TIME:
                 logger.debug(f"Reverting staged date back to selected date {idle_seconds}> {QUIESCENT_TIME}")
                 TMB.scr.show_staged_date(config.DATE)
@@ -901,6 +1042,7 @@ def event_loop(state, lock):
                 track_event.set()
                 playstate_event.set()
                 save_state(state)
+                write_status_file(state)
                 if current["PLAY_STATE"] != config.PLAYING:  # deal with overnight pauses, which freeze the alsa player.
                     if (now - config.PAUSED_AT).seconds > SLEEP_AFTER_SECONDS and state.player.get_prop(
                         "audio-device"

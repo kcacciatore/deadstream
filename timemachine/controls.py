@@ -48,6 +48,15 @@ logger = logging.getLogger(__name__)
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONTS_DIR = os.path.join(ROOT_DIR, "fonts")
 
+# Psychedelic color palette
+BGCOLOR      = (8,   0,  20)   # near-black deep purple
+COLOR_DATE   = (255,  50, 220)  # hot magenta  — staged date (top row)
+COLOR_VENUE  = ( 50, 255, 100)  # electric green — venue / artist
+COLOR_TRACK  = (255, 160,   0)  # amber          — track names
+COLOR_SELECT = (255, 220,  50)  # gold           — confirmed date
+COLOR_PLAY   = (200,  50, 255)  # violet         — play/pause icon
+COLOR_EVENTS = (  0, 220, 255)  # cyan           — event count
+
 screen_semaphore = BoundedSemaphore(1)
 state_semaphore = BoundedSemaphore(1)
 QUIESCENT_TIME = 20
@@ -751,7 +760,7 @@ class screen:
             x_offset=x_offset,
             y_offset=y_offset,
         )
-        self.bgcolor = color565(0, 0, 0)
+        self.bgcolor = color565(*BGCOLOR)
         self.led = LED(config.screen_led_pin, initial_value=True)
         # --- swap width/height, if
         if self.disp.rotation % 180 == 90:
@@ -761,16 +770,16 @@ class screen:
         self.width, self.height = width, height
         logger.debug(f" ---> disp {self.disp.width},{self.disp.height}")
         self.boldfont = ImageFont.truetype(
-            pkg_resources.resource_filename("timemachine.fonts", "DejaVuSansMono-Bold.ttf"), 33
+            pkg_resources.resource_filename("timemachine.fonts", "VT323-Regular.ttf"), 36
         )
         self.boldsmall = ImageFont.truetype(
-            pkg_resources.resource_filename("timemachine.fonts", "DejaVuSansMono-Bold.ttf"), 22
+            pkg_resources.resource_filename("timemachine.fonts", "ShareTechMono-Regular.ttf"), 20
         )
-        self.font = ImageFont.truetype(pkg_resources.resource_filename("timemachine.fonts", "ariallgt.ttf"), 30)
-        self.smallfont = ImageFont.truetype(pkg_resources.resource_filename("timemachine.fonts", "ariallgt.ttf"), 20)
-        self.oldfont = ImageFont.truetype(pkg_resources.resource_filename("timemachine.fonts", "FreeMono.ttf"), 20)
-        self.largefont = ImageFont.truetype(pkg_resources.resource_filename("timemachine.fonts", "FreeMono.ttf"), 30)
-        self.hugefont = ImageFont.truetype(pkg_resources.resource_filename("timemachine.fonts", "FreeMono.ttf"), 40)
+        self.font = ImageFont.truetype(pkg_resources.resource_filename("timemachine.fonts", "Boogaloo-Regular.ttf"), 28)
+        self.smallfont = ImageFont.truetype(pkg_resources.resource_filename("timemachine.fonts", "Boogaloo-Regular.ttf"), 20)
+        self.oldfont = ImageFont.truetype(pkg_resources.resource_filename("timemachine.fonts", "ShareTechMono-Regular.ttf"), 18)
+        self.largefont = ImageFont.truetype(pkg_resources.resource_filename("timemachine.fonts", "VT323-Regular.ttf"), 32)
+        self.hugefont = ImageFont.truetype(pkg_resources.resource_filename("timemachine.fonts", "VT323-Regular.ttf"), 44)
 
         self.image = Image.new("RGB", (width, height))
         self.draw = ImageDraw.Draw(self.image)  # draw using this object. Display image when complete.
@@ -815,12 +824,12 @@ class screen:
             self.disp.image(self.image)
 
     def clear_area(self, bbox, force=False):
-        self.draw.rectangle(bbox.corners, outline=0, fill=(0, 0, 0))
+        self.draw.rectangle(bbox.corners, outline=BGCOLOR, fill=BGCOLOR)
         if force or self.update_now:
             self.refresh(True)
 
     def clear(self):
-        self.draw.rectangle((0, 0, self.width, self.height), outline=0, fill=(0, 0, 0))
+        self.draw.rectangle((0, 0, self.width, self.height), outline=BGCOLOR, fill=BGCOLOR)
         self.refresh(True)
 
     def sleep(self):
@@ -890,15 +899,15 @@ class screen:
         self.clear_area(self.exp_bbox)
         self.show_text(text, self.exp_bbox.origin(), font=self.smallfont, color=color, stroke_width=1, force=force)
 
-    def show_nevents(self, num_events, color=(255, 100, 0), force=False):
+    def show_nevents(self, num_events, color=COLOR_EVENTS, force=False):
         self.clear_area(self.nevents_bbox)
         self.show_text(str(num_events), self.nevents_bbox.origin(), font=self.boldsmall, color=color, force=force)
 
-    def show_venue(self, arg, color=(0, 255, 255), force=False):
+    def show_venue(self, arg, color=COLOR_VENUE, force=False):
         self.clear_area(self.venue_bbox)
         self.show_text(arg, self.venue_bbox.origin(), font=self.boldsmall, color=color, force=force)
 
-    def show_staged_years(self, years, color=(0, 255, 255), show_dash=False, force=False):
+    def show_staged_years(self, years, color=COLOR_DATE, show_dash=False, force=False):
         if isinstance(years, datetime.date):
             self.staged_date = years
             years = [years.year, years.year]
@@ -930,7 +939,7 @@ class screen:
         self.show_text(text, self.staged_date_bbox.origin(), self.boldfont, color=color, force=force)
         self.staged_years = years
 
-    def show_staged_year(self, date, color=(0, 255, 255), force=False):
+    def show_staged_year(self, date, color=COLOR_DATE, force=False):
         if (date == self.staged_date) and not force:
             return
         self.clear_area(self.staged_date_bbox)
@@ -939,7 +948,7 @@ class screen:
         self.show_text(text, self.staged_date_bbox.origin(), self.boldfont, color=color, force=force)
         self.staged_date = date
 
-    def show_staged_date(self, date, color=(0, 255, 255), force=False):
+    def show_staged_date(self, date, color=COLOR_DATE, force=False):
         if date == self.staged_date:
             return
         self.clear_area(self.staged_date_bbox)
@@ -951,7 +960,7 @@ class screen:
         self.show_text(text, self.staged_date_bbox.origin(), self.boldfont, color=color, force=force)
         self.staged_date = date
 
-    def show_selected_date(self, date, color=(255, 255, 255), force=False):
+    def show_selected_date(self, date, color=COLOR_SELECT, force=False):
         if (date == self.selected_date) and not force:
             return
         self.clear_area(self.selected_date_bbox)
@@ -962,7 +971,7 @@ class screen:
         self.show_text(text, self.selected_date_bbox.origin(), self.boldsmall, color=color, force=force)
         self.selected_date = date
 
-    def show_track(self, text, trackpos, color=(120, 0, 255), raw_text=False, force=False):
+    def show_track(self, text, trackpos, color=COLOR_TRACK, raw_text=False, force=False):
         text = text if raw_text else " ".join(x.capitalize() for x in text.split())
         bbox = self.track1_bbox if trackpos == 0 else self.track2_bbox
         self.clear_area(bbox)
@@ -970,7 +979,7 @@ class screen:
         if force or self.update_now:
             self.refresh(True)
 
-    def show_playstate(self, staged_play=False, color=(0, 100, 255), sbd=None, force=False):
+    def show_playstate(self, staged_play=False, color=COLOR_PLAY, sbd=None, force=False):
         logger.debug(f"showing playstate {config.PLAY_STATE}")
         bbox = self.playstate_bbox
         self.clear_area(bbox)
