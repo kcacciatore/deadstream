@@ -359,12 +359,28 @@ STYLE = """
 
   .back-link { display: inline-block; margin-bottom: 12px; font-size: 0.9em; }
 
-  #now-playing-card { position: sticky; bottom: 16px; margin-top: 24px; }
-  #np-state { color: #39ff14; font-size: 1.1em; margin: 0; }
+  /* Shows — split-panel shell */
+  body.shows-layout { padding: 0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+  .shows-shell { display: flex; flex: 1; overflow: hidden; }
+  .shows-sidebar {
+    width: 280px; flex-shrink: 0;
+    background: rgba(15,0,40,0.98);
+    border-right: 2px solid #6600cc;
+    padding: 20px 16px; overflow-y: auto;
+  }
+  .sidebar-header {
+    font-family: 'Righteous', serif; color: #ff3dff;
+    text-shadow: 0 0 8px #ff3dff; font-size: 1.05em;
+    text-align: center; margin-bottom: 16px;
+  }
+  .shows-main { flex: 1; overflow-y: auto; padding: 24px 28px; }
+  .shows-main .card { max-width: none; margin: 0 0 20px; }
+  #now-playing-card { position: static; margin-top: 0; max-width: none; margin-left: 0; margin-right: 0; }
+  #np-state { color: #39ff14; font-size: 1em; margin: 0; }
   #np-track { color: #ffd700; margin: 4px 0 0; }
-  #np-venue { color: #aaaaaa; font-size: 0.85em; margin: 2px 0; }
-  #np-tape  { color: #888888; font-size: 0.75em; margin: 0; word-break: break-all; }
-  .np-controls button { padding: 8px 16px; font-size: 1.1em; }
+  #np-venue { color: #aaaaaa; font-size: 0.82em; margin: 2px 0; }
+  #np-tape  { color: #888888; font-size: 0.72em; margin: 0; word-break: break-all; }
+  .np-controls button { padding: 5px 10px; font-size: 0.8em; margin: 4px 4px 0 0; }
 </style>
 """
 
@@ -806,30 +822,44 @@ class OptionsServer(object):
             return self._shows_for_year(archive, int(year))
         return self._shows_year_list(archive)
 
+    def _shows_layout(self, title, main_html):
+        """Wrap shows content in the split-panel shell (sidebar player + scrollable main)."""
+        return f"""<html>{self._head(title)}
+        <body class="shows-layout">
+          <div class="shows-shell">
+            <aside class="shows-sidebar">
+              <div class="sidebar-header">&#9760; Time Machine &#9760;</div>
+              {self._now_playing_widget()}
+              <p style="margin-top:16px; font-size:0.8em; text-align:center">
+                <a href="/">&#9881; Options</a>
+              </p>
+            </aside>
+            <main class="shows-main">
+              {main_html}
+            </main>
+          </div>
+        </body></html>"""
+
     def _shows_year_list(self, archive):
         years = sorted(set(int(d[:4]) for d in archive.dates), reverse=True)
         items = "".join(f'<li><a href="/shows?year={y}">{y}</a></li>' for y in years)
-        return f"""<html>{self._head("Browse Shows")}
-        <body>
+        main = f"""
           <h1>&#9760; Browse Shows &#9760;</h1>
           <div class="card">
             <ul class="show-list">{items}</ul>
-          </div>
-          {self._now_playing_widget()}
-        </body></html>"""
+          </div>"""
+        return self._shows_layout("Browse Shows", main)
 
     def _shows_for_year(self, archive, year):
         dates = sorted(d for d in archive.dates if d.startswith(str(year)))
         items = "".join(f'<li><a href="/shows?date={d}">{d}</a></li>' for d in dates)
-        return f"""<html>{self._head(f"Shows: {year}")}
-        <body>
+        main = f"""
           <h1>&#9760; {year} &#9760;</h1>
           <div class="card">
             <a class="back-link" href="/shows">&larr; All Years</a>
             <ul class="show-list">{items}</ul>
-          </div>
-          {self._now_playing_widget()}
-        </body></html>"""
+          </div>"""
+        return self._shows_layout(f"Shows: {year}", main)
 
     def _shows_for_date(self, archive, date):
         tapes = archive.tape_dates.get(date, [])
@@ -862,16 +892,14 @@ class OptionsServer(object):
                 </form>
               </div>""")
         body = "\n".join(cards) if cards else "<p>No tapes found for this date.</p>"
-        return f"""<html>{self._head(f"Shows: {date}")}
-        <body>
+        main = f"""
           <h1>&#9760; {date} &#9760;</h1>
           <h2>{venue}</h2>
           <div class="card">
             <a class="back-link" href="/shows?year={year}">&larr; {year}</a>
             {body}
-          </div>
-          {self._now_playing_widget()}
-        </body></html>"""
+          </div>"""
+        return self._shows_layout(f"Shows: {date}", main)
 
     @cherrypy.expose
     def play(self, tape_id=None):
