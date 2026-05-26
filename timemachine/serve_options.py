@@ -363,10 +363,10 @@ STYLE = """
   body.shows-layout { padding: 0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
   .shows-shell { display: flex; flex: 1; overflow: hidden; }
   .shows-sidebar {
-    width: 280px; flex-shrink: 0;
+    width: 30%; flex-shrink: 0;
     background: rgba(15,0,40,0.98);
     border-right: 2px solid #6600cc;
-    padding: 20px 16px; overflow-y: auto;
+    padding: 20px 24px; overflow-y: auto;
   }
   .sidebar-header {
     font-family: 'Righteous', serif; color: #ff3dff;
