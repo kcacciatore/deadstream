@@ -59,6 +59,7 @@ stop_update_event = Event()
 stop_loop_event = Event()
 venue_counter = (0, 0)
 QUIESCENT_TIME = 20
+SCREENSAVER_AFTER_SECONDS = 300   # 5 minutes idle → dancing bear
 SLEEP_AFTER_SECONDS = 3600
 PWR_LED_ON = False
 AUTO_PLAY = True
@@ -1048,13 +1049,17 @@ def event_loop(state, lock):
                         "audio-device"
                     ) not in ["null", "pulse"]:
                         logger.info(f"Paused at {config.PAUSED_AT}, sleeping after {SLEEP_AFTER_SECONDS}, now {now}")
+                        TMB.scr.stop_screensaver()
                         TMB.scr.sleep()
                         state.player._set_property("audio-device", "null")
                         state.player.wait_for_property("audio-device", lambda x: x == "null")
                         state.set(current)
                         playstate_event.set()
                     elif (now - current["WOKE_AT"]).seconds > SLEEP_AFTER_SECONDS:
+                        TMB.scr.stop_screensaver()
                         TMB.scr.sleep()
+                    elif idle_seconds > SCREENSAVER_AFTER_SECONDS and not TMB.scr.sleeping:
+                        TMB.scr.start_screensaver()
                 if idle_seconds > QUIESCENT_TIME:
                     if config.DATE:
                         TMB.scr.show_staged_date(config.DATE)

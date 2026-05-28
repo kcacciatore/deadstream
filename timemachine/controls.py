@@ -20,7 +20,8 @@ import os
 import string
 import subprocess
 from bisect import bisect
-from threading import BoundedSemaphore, Event
+import math
+from threading import BoundedSemaphore, Event, Thread
 from time import sleep
 from typing import Callable
 
@@ -842,9 +843,98 @@ class screen:
     def wake_up(self):
         config.WOKE_AT = datetime.datetime.now()
         self.sleeping = False
+        self.stop_screensaver()
         self.led.on()
         if self.update_now:
             self.refresh(force=False)
+
+    # ------------------------------------------------------------------ #
+    # Screensaver                                                           #
+    # ------------------------------------------------------------------ #
+
+    def screensaver(self, stop_event, fps=12):
+        """Animate a dancing bear until stop_event is set. Run in a daemon thread."""
+        asset = os.path.join(os.path.dirname(__file__), "assets", "dancing_bear.png")
+        try:
+            bear_orig = Image.open(asset).convert("RGBA")
+        except Exception as e:
+            logger.warning(f"screensaver: could not load bear asset: {e}")
+            return
+
+        # Scale to 72 px tall
+        scale = 72.0 / bear_orig.height
+        bear_orig = bear_orig.resize(
+            (int(bear_orig.width * scale), 72), Image.LANCZOS
+        )
+
+        W, H = self.width, self.height
+        bw, bh = bear_orig.size
+
+        # Initial bounce position and velocity
+        fx, fy = float(W // 2 - bw // 2), float(H // 2 - bh // 2)
+        dx, dy = 1.3, 0.9
+
+        frame = 0
+        frame_delay = 1.0 / fps
+
+        while not stop_event.is_set():
+            t = frame / fps
+            angle = 8.0 * math.sin(2 * math.pi * t * 0.7)  # ±8° sway at 0.7 Hz
+
+            rotated = bear_orig.rotate(angle, expand=False, resample=Image.BICUBIC)
+            rw, rh = rotated.size
+
+            # Bounce off edges
+            fx += dx
+            fy += dy
+            if fx <= 0 or fx + rw >= W:
+                dx = -dx
+                fx = max(0.0, min(fx, float(W - rw)))
+            if fy <= 0 or fy + rh >= H:
+                dy = -dy
+                fy = max(0.0, min(fy, float(H - rh)))
+
+            # Composite bear onto background
+            frame_img = Image.new("RGB", (W, H), BGCOLOR)
+            frame_img.paste(rotated, (int(fx), int(fy)), rotated)
+
+            # Push directly to hardware (bypass self.image so normal display is preserved)
+            acquired = screen_semaphore.acquire(timeout=0.5)
+            if acquired:
+                try:
+                    if not self.sleeping:
+                        self.disp.image(frame_img)
+                finally:
+                    screen_semaphore.release()
+
+            frame += 1
+            stop_event.wait(frame_delay)  # interruptible sleep
+
+    def start_screensaver(self, fps=12):
+        """Start the dancing bear screensaver in a background thread."""
+        if getattr(self, "_screensaver_running", False):
+            return
+        self._screensaver_stop = Event()
+        self._screensaver_thread = Thread(
+            target=self.screensaver,
+            args=(self._screensaver_stop,),
+            kwargs={"fps": fps},
+            name="screensaver",
+            daemon=True,
+        )
+        self._screensaver_running = True
+        self._screensaver_thread.start()
+        logger.info("screensaver: started")
+
+    def stop_screensaver(self):
+        """Stop the dancing bear screensaver and restore the display."""
+        if not getattr(self, "_screensaver_running", False):
+            return
+        self._screensaver_stop.set()
+        self._screensaver_thread.join(timeout=2)
+        self._screensaver_running = False
+        logger.info("screensaver: stopped")
+        self.refresh(force=True)  # restore whatever livemusic last drew
 
     def show_text(self, text, loc=(0, 0), font=None, color=(255, 255, 255), stroke_width=0, force=False, clear=False):
         if text is None:
